@@ -104,15 +104,11 @@ module apb_interface
                 invalid_address = 1'b0; // Reset invalid address flag
                 sent_buffer = 32'b0; // Reset data to be written to register
             end else
-            else if (psel && !penable) // If psel = 1 and penable = 0 -> SET_UP state
-            begin
-                next_state = SET_UP; // Remain in SET_UP phase
-                invalid_address = 1'b0; // Reset invalid address flag
-                sent_buffer = 32'b0; // Reset data to be written to register
-            end
             else begin
                 // psel always = 1, penable = 0 -> hold state (SET_UP -> SET_UP , TRANSFER -> TRANSFER)
                 next_state = current_state;
+                invalid_address = invalid_address; // Hold invalid address flag
+                sent_buffer = sent_buffer; // Hold data to be written to register
             end
         end
     end
@@ -208,8 +204,12 @@ module apb_interface
                                     begin
                                         reg_address_des     <= paddr         [4:0];    // Set register address
                                         data_write_to_reg   <= sent_buffer   [7:0];    // Set data to write to register
-                                        byte_sent_counter   <= 1; // Increment byte sent counter
-                                        start_tx_signal     <= 1'b1; // Set start_tx signal to indicate transmission start
+                                        byte_sent_counter   <= 1;                       // Increment byte sent counter
+                                        start_tx_signal     <= 1'b1;                    // Set start_tx signal to indicate transmission start
+                                        transfer_done       <= 1'b0;                   // Set transfer done signal    
+                                        pslverr             <= 1'b0;                   // No error in transfer 
+                                        pready              <= 1'b0;                   // Set ready signal
+                                        prdata              <= 32'b0;                   // Reset read data bus
                                     end
                                     else byte_sent_counter <= 1;
                                 end
@@ -221,6 +221,10 @@ module apb_interface
                                         data_write_to_reg   <= sent_buffer   [15:8];  // Set data to write to register
                                         byte_sent_counter   <= 2; // Increment byte sent counter
                                         start_tx_signal     <= 1'b1; // Set start_tx signal to indicate transmission start
+                                        transfer_done       <= 1'b0;                   // Set transfer done signal    
+                                        pslverr             <= 1'b0;                   // No error in transfer 
+                                        pready              <= 1'b0;                   // Set ready signal
+                                        prdata              <= 32'b0;                   // Reset read data bus
                                     end
                                     else byte_sent_counter <= 2;
                                 end
@@ -232,6 +236,10 @@ module apb_interface
                                         data_write_to_reg   <= sent_buffer   [23:16]; // Set data to write to register
                                         byte_sent_counter   <= 3; // Increment byte sent counter
                                         start_tx_signal     <= 1'b1; // Set start_tx signal to indicate transmission start
+                                        transfer_done       <= 1'b0;                   // Set transfer done signal    
+                                        pslverr             <= 1'b0;                   // No error in transfer 
+                                        pready              <= 1'b0;                   // Set ready signal
+                                        prdata              <= 32'b0;                   // Reset read data bus
                                     end
                                     else byte_sent_counter <= 3;
                                 end
@@ -241,29 +249,47 @@ module apb_interface
                                     begin
                                         reg_address_des     <= paddr         [4:0];    // Set register address
                                         data_write_to_reg   <= sent_buffer   [31:24]; // Set data to write to register
-                                        byte_sent_counter   <= 0; // Reset byte sent counter for next write operation\
+                                        byte_sent_counter   <= 4; // Reset byte sent counter for next write operation\
                                         start_tx_signal     <= 1'b1; // Set start_tx signal to indicate transmission start
+                                        transfer_done       <= 1'b0;                   // Set transfer done signal    
+                                        pslverr             <= 1'b0;                   // No error in transfer 
+                                        pready              <= 1'b0;                   // Set ready signal
+                                        prdata              <= 32'b0;                   // Reset read data bus
                                     end
                                     else byte_sent_counter <= 4; // Reset counter for next write operation
-                                end else 
+                                end else if (byte_sent_counter == 4) // If all 4 bytes are sent
+                                begin
+                                    transfer_done <= 1'b1;  
+                                    pslverr <= 1'b0;   // No error in transfer
+                                    pready <= 1'b1; // Set ready signal
+                                    byte_sent_counter <= 0; // Reset byte sent counter for next write operation
+                                    reg_address_des <= paddr[4:0]; // Set register address
+                                    prdata <= 32'b0; // Reset read data bus
+                                    data_write_to_reg <= 8'b0; // Reset data to write to register
+                                end else byte_sent_counter <= byte_sent_counter; // Hold byte sent counter if not all bytes are sent
                                 begin
                                     reg_address_des     <= 5'b0; // Reset register address
                                     start_tx_signal     <= 1'b0; // Reset start_tx signal if no byte is selected
                                     data_write_to_reg   <= 8'b0; // Reset data to write to register
+                                    pslverr             <= 1'b0;                   // No error in transfer 
+                                    pready              <= 1'b0;                   // Set ready signal
+                                    prdata              <= 32'b0;                   // Reset read data bus
                                 end
+                            end else
+                            begin
+                                reg_address_des     <= 5'b0; // Reset register address
+                                data_write_to_reg   <= 8'b0; // Reset data to write to register
+                                pslverr             <= 1'b1; // No error in transfer 
+                                pready              <= 1'b1; // Set ready signal
+                                prdata              <= 32'b0; // Reset read data bus
+                                transfer_done       <= 1'b1; 
+                                start_tx_signal     <= 1'b0; // Reset start_tx signal if address is not valid
                             end
                         end else // If tx_done_signal = 0 -> UART is still transmitting
                         begin
                             transfer_done <= 1'b0; // Not done yet
                         end
-                        if (byte_sent_counter == 4) // If all 4 bytes are sent
-                        begin
-                            transfer_done <= 1'b1;  
-                            pslverr <= 1'b0; // No error in transfer
-                            pready <= 1'b1; // Set ready signal
-                            byte_sent_counter <= 0; // Reset byte sent counter for next write operation
-                        end
-                        else byte_sent_counter <= byte_sent_counter; // Hold byte sent counter if not all bytes are sent
+                        
                     end else //    If READ operation (pwrite = 0)
                     begin
                         data_write_to_reg <= 8'b0; // Reset data to write to register
@@ -314,7 +340,7 @@ module apb_interface
                                     transfer_done           <= 1'b0;                            // Not done yet
                                     errror_flag                 <= errror_flag | parity_error_signal;   // No error in transfer
                                     pready                  <= 1'b0;                            // Set ready signal
-                                       // Reset start_tx signal
+                                
                                     reset_counter           <= 1'b1;                            // Reset counter
                                     byte_received_counter   <= byte_received_counter + 1;       // Increment byte received counter
                                 end
@@ -326,7 +352,7 @@ module apb_interface
                                     errror_flag             <= errror_flag | parity_error_signal;   // No error in transfer
                                     pready                  <= 1'b0;                            // Set ready signal
                                     data_write_to_reg       <= 8'b0;                            // Reset data to write to register
-                                       // Reset start_tx signal
+                                
                                     reset_counter           <= 1'b1;                            // Reset counter
                                     byte_received_counter   <= byte_received_counter + 1;       // Increment byte received counter
                                 end
@@ -338,7 +364,7 @@ module apb_interface
                                     transfer_done           <= 1'b0;                            // Not done yet
                                     errror_flag             <= errror_flag | parity_error_signal;   // No error in transfer
                                     pready                  <= 1'b0;                            // Set ready signal
-                                       // Reset start_tx signal
+                                    
                                     reset_counter           <= 1'b1;                            // Reset counter
                                     byte_received_counter   <= byte_received_counter + 1;       // Increment byte received counter
                                 end
@@ -350,7 +376,7 @@ module apb_interface
                                     transfer_done           <= 1'b1;                            // Set transfer done signal
                                     errror_flag             <= errror_flag | parity_error_signal;   // No error in transfer
                                     pready                  <= 1'b0;                            // Set ready signal
-                                       // Reset start_tx signal
+                                    
                                     reset_counter           <= 1'b1;                            // Reset counter
                                     byte_received_counter   <= byte_received_counter + 1;                               // Reset byte received counter for next read operation
                                 end else
@@ -363,33 +389,30 @@ module apb_interface
                                     
                                     reset_counter           <= 1'b1; // Reset counter
                                 end
-                            end 
-                            else // If rx_done_signal = 0 -> UART is still receiving -> Waiting
+                            end else // If rx_done_signal = 0 -> UART is still receiving -> Waiting
+                            begin
+                                if (reset_counter)
                                 begin
-                                    if (reset_counter)
-                                        begin
-                                            reset_counter <= 1'b0; // Reset counter
-                                            counter <= 0; // Reset counter
-                                        end
-                                    else 
+                                    reset_counter <= 1'b0; // Reset counter
+                                    counter <= 0; // Reset counter
+                                end else 
+                                begin
+                                    if (counter == TIMEOUT_CYCLES)
                                     begin
-                                        if (counter == TIMEOUT_CYCLES)
-                                            begin
-                                                pslverr <= 1'b1; // Set slave error signal
-                                                pready <= 1'b1;  
-                                                transfer_done <= 1'b1; // Not done yet
-                                                reg_address_des <= paddr[4:0]; // Set register address
-                                                prdata <= receive_buffer; // Read data from receive buffer
-                                                                                         byte_received_counter <= 0; // Reset byte received counter
-                                                errror_flag <= 1'b0; // Reset error flag
-                                                reset_counter <= 1'b1; // Reset counter
-                                            end
-                                        else
-                                            begin
-                                                counter <= counter + 1; // Increment counter
-                                            end
+                                        pslverr <= 1'b1; // Set slave error signal
+                                        pready <= 1'b1;  
+                                        transfer_done <= 1'b1; // Not done yet
+                                        reg_address_des <= paddr[4:0]; // Set register address
+                                        prdata <= receive_buffer; // Read data from receive buffer
+                                        byte_received_counter <= 0; // Reset byte received counter
+                                        errror_flag <= 1'b0; // Reset error flag
+                                        reset_counter <= 1'b1; // Reset counter
+                                    end else
+                                    begin
+                                        counter <= counter + 1; // Increment counter
                                     end
                                 end
+                            end
                             // IF PCB received 4 byte -> Done Transfer
                             if (byte_received_counter == 4) // If RX done signal is not received
                             begin
@@ -404,6 +427,7 @@ module apb_interface
                         end
                     end
                 end
+                
                 default: // Default case to handle unexpected states -> Reset 
                 begin
                     pready              <= 1'b0;     // Not ready in default state

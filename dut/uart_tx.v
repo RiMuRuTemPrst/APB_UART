@@ -67,13 +67,16 @@ module uart_tx (
             case (state)
                 IDLE: begin
                     tx         <= 1'b1;
-                    tx_done    <= 1'b0;
+                    tx_done    <= 1'b1;
                     bit_counter <= 4'd0;
 
-                    if (tx_enable) begin
+                    if (tx_enable) 
+                    begin
                         tx_busy <= 1'b1;
+                        tx_done <= 1'b0;
                         state   <= START_BIT;
-                    end else begin
+                    end else 
+                    begin
                         tx_busy <= 1'b0;
                         tx_done <= 1'b1;
                     end
