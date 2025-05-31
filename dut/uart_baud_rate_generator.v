@@ -2,8 +2,8 @@
 // Description: Generates baud_tick for UART TX/RX based on clock divider
 
 module uart_baud_rate_generator #(
-    parameter CLK_FREQ_HZ = 4,   // System clock frequency (50 MHz on DE2)
-    parameter BAUD_RATE    = 2       // Target UART baud rate
+    parameter CLK_FREQ_HZ   = 50_000_000,   // System clock frequency (50 MHz on DE2)
+    parameter BAUD_RATE     = 115200       // Target UART baud rate
 )(
     input  wire clk,
     input  wire rst_n,

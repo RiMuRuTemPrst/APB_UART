@@ -11,7 +11,6 @@ module register_block (
     input wire  [4:0]  reg_address_des,          // Register address to access
     input wire  [7:0]  data_write_to_reg,       // Data to write to register
     input wire         start_tx_signal,
-    input wire         invalid_address
 
     output reg [7:0]  data_to_APB,          // data trasnfer to APB
     output reg        tx_done_signal,      // Signal to indicate TX done
@@ -25,9 +24,6 @@ module register_block (
     output reg [7:0]  tx_data_out,
     output reg        start_tx,
     output reg [4:0]  cfg_reg_out,
-    output reg        read_tx_done,
-    output reg        read_rx_done,
-    output reg        read_parity_error
 );
 
     //===============================================================================
@@ -184,18 +180,12 @@ module register_block (
             tx_data_out       <= 8'd0;
             start_tx          <= 1'b0;
             cfg_reg_out       <= 5'd0;
-            read_tx_done      <= 1'b0;
-            read_rx_done      <= 1'b0;
-            read_parity_error <= 1'b0;
             rx_data_out       <= 8'd0;
         end else begin
             // Lấy dữ liệu được yêu cầu đọc
             tx_data_out       <= tx_data_reg[7:0];
             start_tx          <= ctrl_reg[0];
             cfg_reg_out       <= cfg_reg[4:0];
-            read_tx_done      <= stt_reg[0];
-            read_rx_done      <= stt_reg[1];
-            read_parity_error <= stt_reg[2];
             rx_data_out       <= rx_data_reg[7:0];
         end
     end

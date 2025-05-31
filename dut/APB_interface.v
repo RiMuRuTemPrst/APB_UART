@@ -1,5 +1,5 @@
 module apb_interface
-( parameter TIMEOUT_CYCLES = 50_000_000 * 1) //  Clock cycles for 1 second timeout at 50 MHz clock
+#(parameter TIMEOUT_CYCLES = 50_000_000 * 1) //  Clock cycles for 1 second timeout at 50 MHz clock
     //===============================================================================
     // APB interface signals
     //===============================================================================
@@ -25,11 +25,11 @@ module apb_interface
     output reg         start_tx_signal,
     //===============================================================================
     // Apb_interface <- register_block
-    input  wire [7:0]  rx_data_in,          // Received data from UART
+    input  wire [7:0]  data_read,          // Received data from UART
     input  wire        tx_done_signal,      // Signal to indicate TX done
     input  wire        rx_done_signal,      // Signal to indicate RX done
     input  wire        parity_error_signal  // Signal to indicate parity error
-)
+);
     //===============================================================================
     // Internal buffer
     reg [31:0] sent_buffer;     // Data to be written to register
@@ -104,7 +104,7 @@ module apb_interface
                 invalid_address = 1'b0; // Reset invalid address flag
                 sent_buffer = 32'b0; // Reset data to be written to register
             end else
-            else begin
+            begin
                 // psel always = 1, penable = 0 -> hold state (SET_UP -> SET_UP , TRANSFER -> TRANSFER)
                 next_state = current_state;
                 invalid_address = invalid_address; // Hold invalid address flag
@@ -127,7 +127,7 @@ module apb_interface
     begin
         if (!presetn) 
         begin
-            pready <= 1'b0;
+            pready <= 1'b1;
             prdata <= 32'b0;
             pslverr <= 1'b0;
             reg_address_des <= 5'b0;
@@ -149,18 +149,18 @@ module apb_interface
                 begin
                     if (invalid_address) // Hold in Set up phase because of invalid address
                     begin
-                        transfer_done       <= 1'b0;
-                        pready              <= 1'b0; 
+                        transfer_done       <= 1'b1;
+                        pready              <= 1'b1; 
                         pslverr             <= 1'b1;  // Set slave error signal
-                        prdata              <= 32'b0; // Reset read data bus
+                        // prdata              <= 32'b0; // Reset read data bus
                         reg_address_des     <= 5'b0;  // Reset register address
                         data_write_to_reg   <= 8'b0; // Reset data to write to register
                     end else             // penable = 0 ->Still in SET_UP phase
                     begin
                         transfer_done       <= 1'b0; // Reset transfer done signal
-                        pready              <= 1'b0; // Not ready if address is invalid
+                        pready              <= 1'b1; // Not ready if address is invalid
                         pslverr             <= 1'b0; // Set slave error signal
-                        prdata              <= 32'b0; // Reset read data bus
+                        // prdata              <= 32'b0; // Reset read data bus
                         reg_address_des     <= 5'b0;  // Reset register address
                         data_write_to_reg   <= 8'b0; // Reset data to write to register
                     end 
@@ -181,7 +181,7 @@ module apb_interface
                                 data_write_to_reg   <= sent_buffer   [7:0];    // Set data to write to register
                                 transfer_done       <= 1'b1;                   // Set transfer done signal    
                                 pslverr             <= 1'b0;                   // No error in transfer 
-                                pready              <= 1'b1;                   // Set ready signal
+                                pready              <= 1'b0;                   // Set ready signal
                                 prdata              <= 32'b0;                   // Reset read data bus
                                 start_tx_signal     <= 1'b0;                   // DON'T Start Tx
                             end
@@ -189,7 +189,7 @@ module apb_interface
                             begin
                                 reg_address_des     <= paddr         [4:0];    // Set register address
                                 data_write_to_reg   <= sent_buffer   [7:0];    // Set data to write to register
-                                transfer_done       <= 1'b1;                   // Set transfer done signal
+                                transfer_done       <= 1'b0;                   // Set transfer done signal
                                 pslverr             <= 1'b0;                   // No error in transfer 
                                 pready              <= 1'b1;                   // Set ready signal
                                 prdata              <= 32'b0;                  // Reset read data bus
@@ -267,14 +267,6 @@ module apb_interface
                                     prdata <= 32'b0; // Reset read data bus
                                     data_write_to_reg <= 8'b0; // Reset data to write to register
                                 end else byte_sent_counter <= byte_sent_counter; // Hold byte sent counter if not all bytes are sent
-                                begin
-                                    reg_address_des     <= 5'b0; // Reset register address
-                                    start_tx_signal     <= 1'b0; // Reset start_tx signal if no byte is selected
-                                    data_write_to_reg   <= 8'b0; // Reset data to write to register
-                                    pslverr             <= 1'b0;                   // No error in transfer 
-                                    pready              <= 1'b0;                   // Set ready signal
-                                    prdata              <= 32'b0;                   // Reset read data bus
-                                end
                             end else
                             begin
                                 reg_address_des     <= 5'b0; // Reset register address
@@ -297,35 +289,35 @@ module apb_interface
                         if (paddr[12:0] ==  13'b0000000000000) //Read from rx_data_reg
                         begin
                             reg_address_des     <= paddr[4:0];    // Set register address
-                            prdata              <= {24'b0, rx_data_in}; // Read data from UART
+                            prdata              <= {24'b0, data_read}; // Read data from UART
                             transfer_done       <= 1'b1; // Set transfer done signal
                             pslverr             <= 1'b0; // No error in transfer 
-                            pready              <= 1'b1; // Set ready signal
+                            pready              <= 1'b0; // Set ready signal
 
                         end
                         else if (paddr[12:0] ==  13'b0000000001000) //Read from cfg_reg
                         begin
                             reg_address_des     <= paddr[4:0];    // Set register address
-                            prdata              <= {24'b0, rx_data_in}; // Read data from UART (cfg_reg is not used in this design)
+                            prdata              <= {24'b0, data_read}; // Read data from UART (cfg_reg is not used in this design)
                             transfer_done       <= 1'b1; // Set transfer done signal
                             pslverr             <= 1'b0; // No error in transfer 
-                            pready              <= 1'b1; // Set ready signal
+                            pready              <= 1'b0; // Set ready signal
                         end
                         else if (paddr[12:0] ==  13'b0000000001100) //Read from ctrl_reg
                         begin
                             reg_address_des     <= paddr[4:0];    // Set register address
-                            prdata              <= {24'b0, rx_data_in}; // Read data from UART (ctrl_reg is not used in this design)
+                            prdata              <= {24'b0, data_read}; // Read data from UART (ctrl_reg is not used in this design)
                             transfer_done       <= 1'b1; // Set transfer done signal
                             pslverr             <= 1'b0; // No error in transfer 
-                            pready              <= 1'b1; // Set ready signal
+                            pready              <= 1'b0; // Set ready signal
                         end
                         else if (paddr[12:0] ==  13'b0000000010000) //Read from stt_reg
                         begin
                             reg_address_des     <= paddr[4:0];    // Set register address
-                            prdata              <= {24'b0, rx_data_in}; // Read data from UART (stt_reg is not used in this design)
+                            prdata              <= {24'b0, data_read}; // Read data from UART (stt_reg is not used in this design)
                             transfer_done       <= 1'b1; // Set transfer done signal
                             pslverr             <= 1'b0; // No error in transfer 
-                            pready              <= 1'b1; // Set ready signal
+                            pready              <= 1'b0; // Set ready signal
                         end
                         else if (paddr[12:0] ==  13'b0000000000100) //Read from data_reg
                         // Read data from UART 
@@ -334,7 +326,7 @@ module apb_interface
                             begin
                                 if (byte_received_counter == 0)
                                 begin
-                                    receive_buffer          <= {24'b0, rx_data_in};             // Store received data in buffer
+                                    receive_buffer          <= {24'b0, data_read};             // Store received data in buffer
                                     reg_address_des         <= paddr[4:0];                      // Set register address
                                     prdata                  <= receive_buffer;                  // Set read data bus to received data
                                     transfer_done           <= 1'b0;                            // Not done yet
@@ -346,7 +338,7 @@ module apb_interface
                                 end
                                 else if (byte_received_counter == 1)
                                 begin
-                                    receive_buffer          <= {receive_buffer[31:16], rx_data_in, receive_buffer [7:0] }; // Store received data in buffer
+                                    receive_buffer          <= {receive_buffer[31:16], data_read, receive_buffer [7:0] }; // Store received data in buffer
                                     prdata                  <= receive_buffer;                  // Set read data bus to received data
                                     transfer_done           <= 1'b0;                            // Not done yet
                                     errror_flag             <= errror_flag | parity_error_signal;   // No error in transfer
@@ -358,7 +350,7 @@ module apb_interface
                                 end
                                 else if (byte_received_counter == 2)
                                 begin
-                                    receive_buffer          <= {receive_buffer[31:24],rx_data_in, receive_buffer [15:0]}; // Store received data in buffer
+                                    receive_buffer          <= {receive_buffer[31:24],data_read, receive_buffer [15:0]}; // Store received data in buffer
                                     reg_address_des         <= paddr[4:0];                      // Set register address
                                     prdata                  <= receive_buffer;                  // Set read data bus to received data
                                     transfer_done           <= 1'b0;                            // Not done yet
@@ -370,7 +362,7 @@ module apb_interface
                                 end
                                 else if (byte_received_counter == 3)
                                 begin
-                                    receive_buffer          <= {rx_data_in, receive_buffer [23:0]}; // Store received data in buffer
+                                    receive_buffer          <= {data_read, receive_buffer [23:0]}; // Store received data in buffer
                                     reg_address_des         <= paddr[4:0];                      // Set register address
                                     prdata                  <= receive_buffer;                  // Set read data bus to received data
                                     transfer_done           <= 1'b1;                            // Set transfer done signal
@@ -444,3 +436,4 @@ module apb_interface
         end
     end
 endmodule
+
