@@ -49,6 +49,7 @@ module apb_uart_top #(
     wire        parity_error;  // Signal to indicate parity error
     wire        start_tx;     // Signal to start transmission
     wire        baud_tick;
+    wire [7:0]  rx_data;      // Data received from UART RX
 
     //===============================================================================
     // APB interface logic
@@ -91,15 +92,15 @@ module apb_uart_top #(
         .start_tx_signal     (start_tx_signal),
         .data_to_APB         (data_read),
         .tx_done_signal      (tx_done_signal),
+        .rx_data_in          (rx_data),
         .rx_done_signal      (rx_done_signal),
         .parity_error_signal (parity_error_signal),
         .set_tx_done         (tx_done),
         .set_rx_done         (rx_done),
         .set_parity_error    (parity_error),
-        .data_read           (rx_data),
         .tx_data_out         (tx_data_out),
         .start_tx            (start_tx),
-        .cfg_reg_out         (cfg_reg_out),
+        .cfg_reg_out         (cfg_reg_out)
     );
 
     //===============================================================================
