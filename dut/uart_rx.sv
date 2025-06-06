@@ -11,9 +11,9 @@ module uart_rx #(
     input  logic        rx,
     input  logic [4:0]  cfg_reg,
 
-    output logic [7:0]   rx_data,
-    output logic         rx_done,
-    output logic         parity_error
+    output logic [7:0]  rx_data,
+    output logic        rx_done,
+    output logic        parity_error
 );
 
     // FSM states
@@ -25,14 +25,17 @@ module uart_rx #(
     } state_t;
 
     state_t state;
-                
+            
     localparam int OVERSAMPLE_RATE = 16;
-    localparam int DIVISOR = CLK_FREQ_HZ / (BAUD_RATE * OVERSAMPLE_RATE);
+    
+    // <<<<< SỬA LỖI Ở ĐÂY: Thêm logic làm tròn để tính DIVISOR chính xác hơn >>>>>
+    localparam int OVERSAMPLED_BAUD = BAUD_RATE * OVERSAMPLE_RATE;
+    localparam int DIVISOR = (CLK_FREQ_HZ + (OVERSAMPLED_BAUD / 2)) / OVERSAMPLED_BAUD;
 
     // Internal registers
     logic [$clog2(OVERSAMPLE_RATE):0] sample_counter;
-    logic [2:0]                       bit_counter;
-    logic [7:0]                       rx_shift_reg;
+    logic [2:0]                      bit_counter;
+    logic [7:0]                      rx_shift_reg;
     
     // Input Synchronizer
     logic rx_s1, rx_s2;
@@ -43,14 +46,14 @@ module uart_rx #(
     wire rx_sync = rx_s2;
 
     // Free-running Oversampling Tick Generator
-    logic [$clog2(DIVISOR)-1:0] tick_counter;
+    logic [$clog2(DIVISOR):0] tick_counter; // Tăng width để an toàn với >=
     logic sample_tick;
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n)                   tick_counter <= '0;
-        else if (tick_counter == DIVISOR - 1) tick_counter <= '0;
-        else                          tick_counter <= tick_counter + 1;
+        if (!rst_n)                            tick_counter <= '0;
+        else if (tick_counter >= DIVISOR - 1)  tick_counter <= '0; // Dùng >= để robust hơn
+        else                                   tick_counter <= tick_counter + 1;
     end
-    assign sample_tick = (tick_counter == DIVISOR - 1);
+    assign sample_tick = (tick_counter >= DIVISOR - 1);
 
     // Main FSM and Datapath Logic
     always_ff @(posedge clk or negedge rst_n) begin
@@ -61,8 +64,9 @@ module uart_rx #(
             rx_shift_reg   <= '0;
             rx_data        <= '0;
             rx_done        <= 1'b0;
-            parity_error   <= 1'b0; // Parity not implemented in this version for simplicity
+            parity_error   <= 1'b0;
         end else begin
+            // Tạo xung đơn cho rx_done
             if (rx_done) rx_done <= 1'b0;
 
             // FSM is driven by the fast sampling tick

@@ -49,7 +49,7 @@ module register_block (
             ctrl_reg    <= 32'b0;
             stt_reg     <= 32'b0;
         end else begin
-            // Handle Register Writes from APB Interface
+            // --- Handle Register Writes from APB Interface ---
             if (reg_we_i) begin
                 case (reg_addr_i)
                     TX_DATA_ADDR: begin
@@ -59,28 +59,30 @@ module register_block (
                         if(reg_strb_i[3]) tx_data_reg[31:24] <= reg_wdata_i[31:24];
                     end
                     CFG_ADDR: begin
-                        // Assuming config is in the lowest byte
                         if(reg_strb_i[0]) cfg_reg[7:0] <= reg_wdata_i[7:0];
                     end
                     CTRL_ADDR: begin
-                        // Assuming control bits are in the lowest byte
                         if(reg_strb_i[0]) ctrl_reg[7:0] <= reg_wdata_i[7:0];
+                    end
+                    // Logic xóa cờ trạng thái: Ghi 1 vào bit tương ứng để xóa nó (Write-1-to-Clear)
+                    STT_ADDR: begin
+                        stt_reg <= stt_reg & ~reg_wdata_i;
                     end
                 endcase
             end
 
-            // Latch incoming data from UART RX into rx_data_reg
+            // --- Latch events into sticky status bits ---
+            // Phần cứng chỉ set cờ, không tự xóa. Phần mềm (TB) phải xóa.
+            if (set_tx_done)      stt_reg[0] <= 1'b1;
+            if (set_rx_done)      stt_reg[1] <= 1'b1;
+            if (set_parity_error) stt_reg[2] <= 1'b1;
+
+
+            // --- Latch incoming data from UART RX ---
             if (set_rx_done) begin
                 // Shift existing data right and load new byte into MSB part
-                // This creates a simple FIFO-like behavior
                 rx_data_reg <= {rx_data_in, rx_data_reg[31:8]};
             end
-
-            // Latch status bits from UART into status register
-            stt_reg[0] <= set_tx_done;
-            stt_reg[1] <= set_rx_done;
-            stt_reg[2] <= set_parity_error;
-            // You can add other status bits here, e.g., tx_busy
         end
     end
 
