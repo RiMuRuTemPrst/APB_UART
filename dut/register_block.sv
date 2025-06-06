@@ -1,41 +1,36 @@
+`timescale 1ns / 1ps
+
 module register_block (
-    // APB interface signals
-    input             pclk,              // APB clock
-    input             presetn,           // APB reset, active LOW
-    input             psel,              // APB select
-    input             penable,           // APB enable
-    input             pwrite,            // APB write
-    input             pslverr,           // APB slave error
+    // Interface to APB (simplified by apb_interface)
+    input  wire        pclk,
+    input  wire        presetn,
+    input  wire [12:0] reg_addr_i,
+    input  wire [31:0] reg_wdata_i,
+    input  wire [3:0]  reg_strb_i,
+    input  wire        reg_we_i,
+    output wire [31:0] reg_rdata_o,
 
-    input wire  [4:0]  reg_address_des,          // Register address to access
-    input wire  [7:0]  data_write_to_reg,       // Data to write to register
-    input wire         start_tx_signal,
-
-    output reg [7:0]  data_to_APB,          // data trasnfer to APB
-    output reg        tx_done_signal,      // Signal to indicate TX done
-    output reg        rx_done_signal,      // Signal to indicate RX done
-    output reg        parity_error_signal,  // Signal to indicate parity error
-    // UART TX/RX Interface
-    input             set_tx_done,
-    input             set_rx_done,
-    input             set_parity_error,
-    input      [7:0]  rx_data_in,
-    output reg [7:0]  tx_data_out,
-    output reg        start_tx,
-    output reg [4:0]  cfg_reg_out
+    // Interface to UART Core (via apb_uart_system_top)
+    input  wire        set_tx_done,
+    input  wire        set_rx_done,
+    input  wire        set_parity_error,
+    input  wire [7:0]  rx_data_in,
+    output wire [7:0]  tx_data_out,
+    output wire        start_tx,
+    output wire [4:0]  cfg_reg_out
 );
 
     //===============================================================================
-    // INTERNAL REGISTERS
+    // Internal Register Definitions
     //===============================================================================
     reg [31:0] tx_data_reg;
     reg [31:0] rx_data_reg;
     reg [31:0] cfg_reg;
     reg [31:0] ctrl_reg;
-    reg [31:0] stt_reg;
+    reg [31:0] stt_reg; // Status register
 
     //===============================================================================
-    // Address map constants
+    // Address Map (using full 13-bit address from APB)
     //===============================================================================
     localparam TX_DATA_ADDR = 13'h000;
     localparam RX_DATA_ADDR = 13'h004;
@@ -44,101 +39,66 @@ module register_block (
     localparam STT_ADDR     = 13'h010;
 
     //===============================================================================
-    // APB Handle
+    // Main Synchronous Logic Block
     //===============================================================================
-    always @(posedge pclk or negedge presetn) 
-    begin
-        if (!presetn) 
-        begin
-            tx_data_reg    <= 32'd0;
-            rx_data_reg    <= 32'd0;
-            cfg_reg        <= 32'd0;
-            ctrl_reg       <= 32'd0;
-            stt_reg        <= 32'd0;
-            data_to_APB    <= 32'd0;
-            tx_done_signal <= 1'b0;
-            rx_done_signal <= 1'b0;
-            parity_error_signal <= 1'b0;
-        end 
-        else 
-        begin
-            rx_done_signal <= stt_reg[1];
-            parity_error_signal <= stt_reg[2];
-            tx_done_signal <= stt_reg[0];
-
-            if (pslverr) 
-            begin
-                tx_data_reg   <= tx_data_reg;
-                rx_data_reg   <= rx_data_reg;
-                cfg_reg       <= cfg_reg;
-                ctrl_reg      <= ctrl_reg;
-                stt_reg       <= stt_reg;
-            end 
-            else 
-            begin
-                if (pwrite) 
-                begin
-                    ctrl_reg[0] <= start_tx_signal;
-                    data_to_APB <= 8'd0;
-                    case (reg_address_des)
-                        TX_DATA_ADDR: begin
-                            tx_data_reg[7:0] <= data_write_to_reg[7:0];
-                        end
-                        CFG_ADDR: begin
-                            cfg_reg[4:0] <= data_write_to_reg[4:0];
-                        end
-                        CTRL_ADDR: begin
-                            ctrl_reg[0] <= data_write_to_reg[0];
-                        end
-                        default: begin 
-                            tx_data_reg   <= tx_data_reg;
-                            rx_data_reg   <= rx_data_reg;
-                            ctrl_reg      <= ctrl_reg;
-                            cfg_reg       <= cfg_reg;
-                            stt_reg       <= stt_reg;
-                        end
-                    endcase
-                end 
-                else 
-                begin
-                    tx_data_reg   <= tx_data_reg;
-                    case (reg_address_des)
-                        TX_DATA_ADDR: data_to_APB <= tx_data_reg[7:0];
-                        RX_DATA_ADDR: data_to_APB <= rx_data_reg[7:0];
-                        CFG_ADDR:     data_to_APB <= cfg_reg[4:0];
-                        CTRL_ADDR:    data_to_APB <= ctrl_reg[0];
-                        STT_ADDR:     data_to_APB <= stt_reg[7:0];
-                        default: begin
-                            data_to_APB <= 8'b0;
-                        end
-                    endcase
-                end
+    always @(posedge pclk or negedge presetn) begin
+        if (!presetn) begin
+            tx_data_reg <= 32'b0;
+            rx_data_reg <= 32'b0;
+            cfg_reg     <= 32'b0;
+            ctrl_reg    <= 32'b0;
+            stt_reg     <= 32'b0;
+        end else begin
+            // Handle Register Writes from APB Interface
+            if (reg_we_i) begin
+                case (reg_addr_i)
+                    TX_DATA_ADDR: begin
+                        if(reg_strb_i[0]) tx_data_reg[7:0]   <= reg_wdata_i[7:0];
+                        if(reg_strb_i[1]) tx_data_reg[15:8]  <= reg_wdata_i[15:8];
+                        if(reg_strb_i[2]) tx_data_reg[23:16] <= reg_wdata_i[23:16];
+                        if(reg_strb_i[3]) tx_data_reg[31:24] <= reg_wdata_i[31:24];
+                    end
+                    CFG_ADDR: begin
+                        // Assuming config is in the lowest byte
+                        if(reg_strb_i[0]) cfg_reg[7:0] <= reg_wdata_i[7:0];
+                    end
+                    CTRL_ADDR: begin
+                        // Assuming control bits are in the lowest byte
+                        if(reg_strb_i[0]) ctrl_reg[7:0] <= reg_wdata_i[7:0];
+                    end
+                endcase
             end
 
+            // Latch incoming data from UART RX into rx_data_reg
+            if (set_rx_done) begin
+                // Shift existing data right and load new byte into MSB part
+                // This creates a simple FIFO-like behavior
+                rx_data_reg <= {rx_data_in, rx_data_reg[31:8]};
+            end
+
+            // Latch status bits from UART into status register
             stt_reg[0] <= set_tx_done;
             stt_reg[1] <= set_rx_done;
             stt_reg[2] <= set_parity_error;
-            rx_data_reg[7:0] <= rx_data_in;
+            // You can add other status bits here, e.g., tx_busy
         end
     end
 
     //===============================================================================
-    // UART logic outputs
+    // Combinational Logic for Outputs
     //===============================================================================
-    always @(posedge pclk or negedge presetn) 
-    begin
-        if (!presetn) 
-        begin
-            tx_data_out       <= 8'd0;
-            start_tx          <= 1'b0;
-            cfg_reg_out       <= 5'd0;
-        end 
-        else 
-        begin
-            tx_data_out       <= tx_data_reg[7:0];
-            start_tx          <= ctrl_reg[0];
-            cfg_reg_out       <= cfg_reg[4:0];
-        end
-    end
+    
+    // Provide read data back to the APB interface
+    assign reg_rdata_o = (reg_addr_i == TX_DATA_ADDR) ? tx_data_reg :
+                         (reg_addr_i == RX_DATA_ADDR) ? rx_data_reg :
+                         (reg_addr_i == CFG_ADDR)     ? cfg_reg :
+                         (reg_addr_i == CTRL_ADDR)    ? ctrl_reg :
+                         (reg_addr_i == STT_ADDR)     ? stt_reg :
+                         32'hDEADBEEF; // Return error value for invalid read addr
+
+    // Provide control/data signals to the UART Core
+    assign tx_data_out = tx_data_reg[7:0]; // UART TX sends the lowest byte
+    assign start_tx    = ctrl_reg[0];      // Assume bit 0 of CTRL_REG is 'start_tx'
+    assign cfg_reg_out = cfg_reg[4:0];     // Provide 5 bits of config to UART core
 
 endmodule
