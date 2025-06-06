@@ -1,6 +1,7 @@
 `timescale 1ns / 1ps
 
-// UART Receiver with Oversampling - Final Corrected Version
+// UART Receiver, final architecture based on reference code.
+// Uses a more robust start bit validation method.
 module uart_rx #(
     parameter int CLK_FREQ_HZ = 50_000_000,
     parameter int BAUD_RATE   = 115200
@@ -15,13 +16,12 @@ module uart_rx #(
     output logic         parity_error
 );
 
-    // FSM states defined using a type-safe enumeration
-    typedef enum logic [2:0] {
-        IDLE,
-        START_CHECK,
-        RECEIVE_DATA,
-        RECEIVE_PARITY,
-        RECEIVE_STOP // Tên đúng
+    // FSM states
+    typedef enum logic [1:0] {
+        STATE_IDLE,
+        STATE_START_VALIDATE,
+        STATE_RECEIVE_DATA,
+        STATE_RECEIVE_STOP
     } state_t;
 
     state_t state;
@@ -29,11 +29,11 @@ module uart_rx #(
     localparam int OVERSAMPLE_RATE = 16;
     localparam int DIVISOR = CLK_FREQ_HZ / (BAUD_RATE * OVERSAMPLE_RATE);
 
+    // Internal registers
     logic [$clog2(OVERSAMPLE_RATE):0] sample_counter;
     logic [2:0]                       bit_counter;
     logic [7:0]                       rx_shift_reg;
-    logic                             parity_calc;
-
+    
     // Input Synchronizer
     logic rx_s1, rx_s2;
     always_ff @(posedge clk or negedge rst_n) begin
@@ -41,7 +41,6 @@ module uart_rx #(
         else        {rx_s1, rx_s2} <= {rx, rx_s1};
     end
     wire rx_sync = rx_s2;
-    wire rx_falling_edge = rx_s1 && !rx_s2;
 
     // Free-running Oversampling Tick Generator
     logic [$clog2(DIVISOR)-1:0] tick_counter;
@@ -56,84 +55,81 @@ module uart_rx #(
     // Main FSM and Datapath Logic
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state <= IDLE; rx_data <= '0; rx_done <= 1'b0; parity_error <= 1'b0;
-            rx_shift_reg <= '0; bit_counter <= '0; sample_counter <= '0; parity_calc <= '0;
+            state          <= STATE_IDLE;
+            sample_counter <= '0;
+            bit_counter    <= '0;
+            rx_shift_reg   <= '0;
+            rx_data        <= '0;
+            rx_done        <= 1'b0;
+            parity_error   <= 1'b0; // Parity not implemented in this version for simplicity
         end else begin
             if (rx_done) rx_done <= 1'b0;
 
-            case (state)
-                IDLE: begin
-                    if (rx_falling_edge) begin
-                        state <= START_CHECK;
-                        sample_counter <= OVERSAMPLE_RATE / 2;
-                        parity_calc    <= 1'b0;
-                    end
-                end
-
-                START_CHECK: begin
-                    if (sample_tick) begin
-                        if (sample_counter > 1) begin
-                            sample_counter <= sample_counter - 1;
-                        end else begin
-                            if (!rx_sync) begin
-                                state <= RECEIVE_DATA;
-                                sample_counter <= OVERSAMPLE_RATE;
-                                bit_counter <= 0;
-                            end else state <= IDLE;
+            // FSM is driven by the fast sampling tick
+            if (sample_tick) begin
+                case (state)
+                    STATE_IDLE: begin
+                        // At every sample tick, check if the line is low.
+                        if (!rx_sync) begin
+                            state          <= STATE_START_VALIDATE;
+                            // Start counting to see if it's a real start bit
+                            sample_counter <= 1;
                         end
                     end
-                end
 
-                RECEIVE_DATA: begin
-                    if (sample_tick) begin
-                        if (sample_counter > 1) begin
-                            sample_counter <= sample_counter - 1;
+                    STATE_START_VALIDATE: begin
+                        // If the line is still low, keep counting.
+                        if (!rx_sync) begin
+                            // If we have seen a low for half a bit period, it's a valid start.
+                            if (sample_counter == OVERSAMPLE_RATE / 2) begin
+                                state          <= STATE_RECEIVE_DATA;
+                                // Reload counter to wait for the next full bit period
+                                sample_counter <= OVERSAMPLE_RATE;
+                                bit_counter    <= 0;
+                            end else begin
+                                sample_counter <= sample_counter + 1;
+                            end
                         end else begin
-                            sample_counter <= OVERSAMPLE_RATE;
+                            // Glitch, not a real start bit. Go back to idle.
+                            state          <= STATE_IDLE;
+                            sample_counter <= 0;
+                        end
+                    end
+
+                    STATE_RECEIVE_DATA: begin
+                        sample_counter <= sample_counter - 1;
+                        if (sample_counter == 1) begin
+                            // We are at the middle of a data bit. Sample it.
                             rx_shift_reg[bit_counter] <= rx_sync;
-                            if (cfg_reg[3]) parity_calc <= parity_calc ^ rx_sync;
                             
-                            if (bit_counter == (cfg_reg[1:0] + 5) - 1) begin
-                                bit_counter <= 0;
-                                // <<<<< SỬA LỖI Ở ĐÂY >>>>>
-                                state       <= cfg_reg[3] ? RECEIVE_PARITY : RECEIVE_STOP;
-                            end else begin
-                                bit_counter <= bit_counter + 1;
-                            end
-                        end
-                    end
-                end
-
-                RECEIVE_PARITY: begin
-                    if (sample_tick) begin
-                        if (sample_counter > 1) sample_counter <= sample_counter - 1;
-                        else begin
-                            if (cfg_reg[3]) parity_error <= ((parity_calc ^ rx_sync) != cfg_reg[4]);
-                            // <<<<< SỬA LỖI Ở ĐÂY >>>>>
-                            state <= RECEIVE_STOP; 
+                            // Reload counter for the next bit
                             sample_counter <= OVERSAMPLE_RATE;
-                            bit_counter <= 0;
-                        end
-                    end
-                end
-
-                RECEIVE_STOP: begin
-                    if (sample_tick) begin
-                        if (sample_counter > 1) sample_counter <= sample_counter - 1;
-                        else begin
-                            if (bit_counter < (cfg_reg[2] ? 1 : 0)) begin
-                                bit_counter <= bit_counter + 1;
-                                sample_counter <= OVERSAMPLE_RATE;
+                            
+                            // Assuming 8 data bits (can be parameterized from cfg_reg)
+                            if (bit_counter == 7) begin
+                                state <= STATE_RECEIVE_STOP;
                             end else begin
-                                if (rx_sync) rx_data <= rx_shift_reg;
-                                rx_done <= 1'b1;
-                                state   <= IDLE;
+                                bit_counter <= bit_counter + 1;
                             end
                         end
                     end
-                end
-                default: state <= IDLE;
-            endcase
+
+                    STATE_RECEIVE_STOP: begin
+                        sample_counter <= sample_counter - 1;
+                        if (sample_counter == 1) begin
+                            // We are at the middle of the stop bit.
+                            if (rx_sync) begin // Stop bit must be high
+                                rx_data <= rx_shift_reg;
+                                rx_done <= 1'b1;
+                            end else begin
+                                // Framing error
+                            end
+                            // Frame is finished, return to idle
+                            state <= STATE_IDLE;
+                        end
+                    end
+                endcase
+            end
         end
     end
 endmodule

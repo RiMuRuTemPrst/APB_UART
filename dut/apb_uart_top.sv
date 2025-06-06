@@ -1,160 +1,128 @@
+`timescale 1ns / 1ps
+
+//===============================================================================
+// Module: apb_uart_top
+// Description:
+//   Top-level module for the entire APB-to-UART system.
+//   Instantiates and connects the APB interface, the register block,
+//   and the core UART logic block (uart_top).
+//===============================================================================
 module apb_uart_top #(
-    parameter CLK_FREQ_HZ    = 50_000_000,
-    parameter BAUD_RATE      = 115200,
-    parameter TIMEOUT_CYCLES = CLK_FREQ_HZ * 1
+    parameter CLK_FREQ_HZ = 50_000_000,
+    parameter BAUD_RATE   = 115200
 )(
-    input  wire        clk,          // System Clock
-    input  wire        rst_n,        // System Reset, active LOW
+    // APB Interface
+    input  wire        pclk,
+    input  wire        presetn,
+    input  wire        psel,
+    input  wire        penable,
+    input  wire        pwrite,
+    input  wire [12:0] paddr,
+    input  wire [31:0] pwdata,
+    input  wire [3:0]  pstrb,
 
-    // APB interface signals
-    input  wire        pclk,         // APB clock
-    input  wire        presetn,      // APB reset, active LOW
-    input  wire        psel,         // APB select
-    input  wire        penable,      // APB enable
-    input  wire        pwrite,       // APB write
-    input  wire [12:0] paddr,        // APB address
-    input  wire [31:0] pwdata,       // APB write data
-    input  wire [3:0]  pstrb,        // Byte strobe
+    output wire        pready,
+    output wire [31:0] prdata,
+    output wire        pslverr,
 
-    output wire [31:0] prdata,       // APB read data
-    output wire        pslverr,      // APB slave error
-    output wire        pready,       // APB ready
-
-    // UART physical signals
-    input  wire        rx,           // UART receive
-    input  wire        cts_n,        // Clear To Send (active low)
-    output wire        tx,           // UART transmit
-    output wire        rts_n         // Request To Send (active low)
+    // Physical UART Pins
+    input  wire        uart_rxd,
+    output wire        uart_txd,
+    input  wire        uart_cts_n,
+    output wire        uart_rts_n
 );
 
     //===============================================================================
-    // APB Interface <-> Register Block
+    // Wires connecting the major blocks
     //===============================================================================
-    wire [7:0]  data_write_to_reg;
-    wire [7:0]  data_read;     //Data APB read from register block
-    wire [4:0]  reg_address_des;
-    wire        start_tx_signal;
-    wire        tx_done_signal;
-    wire        rx_done_signal;
-    wire        parity_error_signal;
-    
 
-    // Internal UART <-> register_block
-    wire        tx_enable;
-    wire        tx_busy;
-    wire [4:0]  cfg_reg_out;
-    wire [7:0]  tx_data_out;
-    wire        tx_done;       // Signal to indicate TX done
-    wire        rx_done;       // Signal to indicate RX done
-    wire        parity_error;  // Signal to indicate parity error
-    wire        start_tx;     // Signal to start transmission
-    wire        baud_tick;
-    wire [7:0]  rx_data;      // Data received from UART RX
+    // --- Wires between APB Interface and Register Block ---
+    wire [12:0] w_reg_addr;
+    wire [31:0] w_reg_wdata;
+    wire [3:0]  w_reg_strb;
+    wire        w_reg_we;
+    wire [31:0] w_reg_rdata;
+
+    // --- Wires between Register Block and UART Core ---
+    wire [7:0]  w_tx_data_to_uart;
+    wire [4:0]  w_cfg_reg_to_uart;
+    wire        w_start_tx_to_uart;
+    wire        w_tx_done_from_uart;
+    wire        w_rx_done_from_uart;
+    wire        w_parity_err_from_uart;
+    wire [7:0]  w_rx_data_from_uart;
+    wire        w_tx_busy_from_uart;
+
 
     //===============================================================================
-    // APB interface logic
+    // Instantiations
     //===============================================================================
-    apb_interface #(
-        .TIMEOUT_CYCLES(TIMEOUT_CYCLES)
-    ) apb_if (
-        .pclk                (pclk),
-        .presetn             (presetn),
-        .psel                (psel),
-        .penable             (penable),
-        .pwrite              (pwrite),
-        .paddr               (paddr),
-        .pwdata              (pwdata),
-        .pstrb               (pstrb),
-        .pready              (pready),
-        .prdata              (prdata),
-        .pslverr             (pslverr),
-        .reg_address_des     (reg_address_des),
-        .data_write_to_reg   (data_write_to_reg),
-        .start_tx_signal     (start_tx_signal),
-        .data_read           (data_read),
-        .tx_done_signal      (tx_done_signal),
-        .rx_done_signal      (rx_done_signal),
-        .parity_error_signal (parity_error_signal)
+
+    // 1. APB Interface Block
+    // Translates APB transactions into simple read/write signals
+    apb_interface apb_interface_inst (
+        .pclk       (pclk),
+        .presetn    (presetn),
+        .psel       (psel),
+        .penable    (penable),
+        .pwrite     (pwrite),
+        .paddr      (paddr),
+        .pwdata     (pwdata),
+        .pstrb      (pstrb),
+        .pready     (pready),
+        .prdata     (prdata),
+        .pslverr    (pslverr),
+        
+        .reg_addr_o (w_reg_addr),
+        .reg_wdata_o(w_reg_wdata),
+        .reg_strb_o (w_reg_strb),
+        .reg_we_o   (w_reg_we),
+        .reg_rdata_i(w_reg_rdata)
     );
 
-    //===============================================================================
-    // Register block
-    //===============================================================================
-    register_block reg_blk (
-        .pclk                (pclk),
-        .presetn             (presetn),
-        .psel                (psel),
-        .penable             (penable),
-        .pwrite              (pwrite),
-        .pslverr             (pslverr),
-        .reg_address_des     (reg_address_des),
-        .data_write_to_reg   (data_write_to_reg),
-        .start_tx_signal     (start_tx_signal),
-        .data_to_APB         (data_read),
-        .tx_done_signal      (tx_done_signal),
-        .rx_data_in          (rx_data),
-        .rx_done_signal      (rx_done_signal),
-        .parity_error_signal (parity_error_signal),
-        .set_tx_done         (tx_done),
-        .set_rx_done         (rx_done),
-        .set_parity_error    (parity_error),
-        .tx_data_out         (tx_data_out),
-        .start_tx            (start_tx),
-        .cfg_reg_out         (cfg_reg_out)
+    // 2. Register Block
+    // Holds configuration, status, and data registers
+    register_block register_block_inst (
+        .pclk             (pclk),
+        .presetn          (presetn),
+        .reg_addr_i       (w_reg_addr),
+        .reg_wdata_i      (w_reg_wdata),
+        .reg_strb_i       (w_reg_strb),
+        .reg_we_i         (w_reg_we),
+        .reg_rdata_o      (w_reg_rdata),
+        
+        .set_tx_done      (w_tx_done_from_uart),
+        .set_rx_done      (w_rx_done_from_uart),
+        .set_parity_error (w_parity_err_from_uart),
+        .rx_data_in       (w_rx_data_from_uart),
+        
+        .tx_data_out      (w_tx_data_to_uart),
+        .start_tx         (w_start_tx_to_uart),
+        .cfg_reg_out      (w_cfg_reg_to_uart)
     );
-
-    //===============================================================================
-    // RTS/CTS Logic
-    //===============================================================================
-    rts_cts_logic rts_cts (
-        .clk         (clk),
-        .reset_n     (rst_n),
-        .start_tx    (start_tx),
-        .tx_busy     (tx_busy),
-        .cts         (cts_n),
-        .rts         (rts_n),
-        .tx_enable   (tx_enable)
-    );
-
-    //===============================================================================
-    // UART Baud Rate Generator
-    //===============================================================================
-    uart_baud_rate_generator #(
+        
+    // 3. UART Core Block
+    // Contains the actual UART logic (TX, RX, Baud Gen, Flow Control)
+    uart_top #(
         .CLK_FREQ_HZ(CLK_FREQ_HZ),
         .BAUD_RATE  (BAUD_RATE)
-    ) baud_gen (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .baud_tick (baud_tick)
-    );
-
-    //===============================================================================
-    // UART Transmitter
-    //===============================================================================
-    uart_tx uart_tx_inst (
-        .clk        (clk),
-        .rst_n      (rst_n),
-        .baud_tick  (baud_tick),
-        .tx_enable  (tx_enable),
-        .cfg_reg    (cfg_reg_out),
-        .tx_data    (tx_data_out),
-        .tx         (tx),
-        .tx_busy    (tx_busy),
-        .tx_done    (tx_done)
-    );
-
-    //===============================================================================
-    // UART Receiver
-    //===============================================================================
-    uart_rx uart_rx_inst (
-        .clk          (clk),
-        .rst_n        (rst_n),
-        .baud_tick    (baud_tick),
-        .rx           (rx),
-        .cfg_reg      (cfg_reg_out),
-        .rx_data      (rx_data),
-        .rx_done      (rx_done),
-        .parity_error (parity_error)
+    ) uart_core_inst (
+        .clk              (pclk),
+        .rst_n            (presetn),
+        .tx_data_in       (w_tx_data_to_uart),
+        .cfg_reg_in       (w_cfg_reg_to_uart),
+        .start_tx_in      (w_start_tx_to_uart),
+        
+        .tx_done_out      (w_tx_done_from_uart),
+        .rx_done_out      (w_rx_done_from_uart),
+        .parity_error_out (w_parity_err_from_uart),
+        .rx_data_out      (w_rx_data_from_uart),
+        .tx_busy_out      (w_tx_busy_from_uart), // Note: tx_busy is not used by this register_block
+        
+        .rxd_in           (uart_rxd),
+        .txd_out          (uart_txd),
+        .cts_n_in         (uart_cts_n),
+        .rts_n_out        (uart_rts_n)
     );
 
 endmodule

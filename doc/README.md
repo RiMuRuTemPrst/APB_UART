@@ -482,8 +482,16 @@ Dưới đây là các trạng thái và chuyển đổi:
 - Các khối con chạy đúng với Spec đề ra cho từng khối con
 - Module Top mới chỉ pass các test đơn giản (Ghi vào thanh config, truyền 1 byte,...) Chưa pass các test tổng hợp, random.
 
-**Test Ting** 
-*** APB Interface - Register - Block ***
+## TestTing
+
+### APB Interface - Register  Block 
+
 ![alt text](image.png)
 ![alt text](image-2.png)
 
+
+### Register Block - UART 
+
+![alt text](image-3.png)
+
+![alt text](image-4.png)
